@@ -1,0 +1,62 @@
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using NumSharp;
+using OpenCvSharp;
+
+public class Tracking : MonoBehaviour
+{
+    // Start is called before the first frame update
+    void Start()
+    {
+
+    }
+
+    // Update is called once per frame
+    void Update()
+    {
+        
+    }
+
+    NDArray MakeCoordinates(NDArray img, NDArray lineParam) {
+        var slope = lineParam[0];
+        var intercept = lineParam[1];
+
+        var y1 = img.shape[0];
+        var y2 = Convert.ToInt32(y1 * 3 / 5);
+        var x1 = Convert.ToInt32((y1 - intercept) / slope);
+        var x2 = Convert.ToInt32((y2 - intercept) / slope);
+
+        return np.array(( x1, y1, x2, y2 ));
+    }
+
+    NDArray averageSlopeIntercept(NDArray img, NDArray lines) {
+        var leftFit = new ArrayList();
+        var rightFit = new ArrayList();
+
+        foreach (NDArray line in lines) {
+            var reshapedLine = line.reshape(4);
+
+            var params = np.polyfit(( reshapedLine[0], reshapedLine[2] ), ( reshapedLine[1], reshapedLine[3] ));
+
+            var slope = params[0];
+            var intercept = params[1];
+            
+            if (slope < 0)
+                leftFit.Add(( slope, intercept ));
+            else
+                rightFit.Add(( slope, intercept ));
+        }
+            
+            var leftFitAvg = np.average(leftFit, axis=0);
+            var rightFitAvg = np.average(rightFit, axis=0);
+
+            var leftLine = MakeCoordinates(img, leftFitAvg);
+            var rightLine = MakeCoordinates(img, rightFitAvg);
+        
+
+        return np.array(new NDArray[] { leftLine, rightLine });
+    }
+
+}
