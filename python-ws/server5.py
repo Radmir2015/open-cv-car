@@ -35,6 +35,9 @@ cameraSizeX = cameraSizeY = 256
 handle_position = None
 connection_active = False
 
+focal_length = 50
+
+car_bottom_y = cameraSizeY // 2
 
 def get_handle_position(windows_title="open-cv-car"):
     windows_list = []
@@ -72,6 +75,9 @@ def crop_image(screenshot):
 
     return screenshot
 
+def get_distance(bbox, ref_length):
+    return ref_length * focal_length / bbox[3]
+
 
 class SimpleEcho(WebSocket):
 
@@ -105,6 +111,8 @@ class SimpleEcho(WebSocket):
                         screenshot = object_detection(screenshot, response)
 
                     send_response(response)
+
+                    cv2.line(screenshot, (0, car_bottom_y), (cameraSizeX, car_bottom_y), (255, 255, 255), 2)
  
                     cv2.imshow("Screen", screenshot)
 
@@ -116,7 +124,7 @@ class SimpleEcho(WebSocket):
             
             def lane_detection(screenshot, response):
                 try:
-                    vert_shift, screenshot = lane2.process(screenshot)
+                    vert_shift, screenshot = lane2.process(screenshot, roi_height=(car_bottom_y / cameraSizeY))
                     
                     response['vert_shift'] = vert_shift
                 except:
@@ -125,7 +133,10 @@ class SimpleEcho(WebSocket):
                 return screenshot
 
             def object_detection(screenshot, response={}, allow_class_ids=[13, 3]):
-                class_to_name = { 13: 'stop', 3: 'car' }
+                class_to_name = {
+                    13: { 'name': 'stop', 'refer_height': 2000, 'color': (0, 255, 0) },
+                    3: { 'name': 'car', 'refer_height': 3000, 'color': (255, 0, 0) }
+                }
 
                 response['stop'] = 0
                 response['car'] = 0
@@ -142,14 +153,39 @@ class SimpleEcho(WebSocket):
                         tracked_objs = tracker.update(allowed_boxes)
                         
                         for inx, (classId, confidence, box) in enumerate([(cl, co, b) for cl, co, b in zip(classesFlatten, confidences.flatten(), boxes) if cl in allow_class_ids]):
-                            print(classId, confidence, box, box[2] * box[3], box[2] * box[3] * confidence)
-                            cv2.putText(screenshot, class_to_name[classId.item()] + str(tracked_objs[inx][-1]), (box[0], box[1] - 8), cv2.FONT_HERSHEY_PLAIN, 2, (255, 0, 0), 2)
-                            cv2.rectangle(screenshot, box, color=(0, 255, 0))
+                            class_name = class_to_name[classId.item()]
+                            distance = round(get_distance(box, class_name['refer_height']) / 1000, 2)
+                            print(classId, confidence, box, box[2] * box[3], box[2] * box[3] * confidence, distance)
 
-                            # response['objects'][class_to_name[classId.item()]] = { 'area': int(box[2] * box[3]), 'conf_area': int(box[2] * box[3] * confidence) }
 
-                            response[class_to_name[classId.item()]] = int(box[2] * box[3])
-                            response[class_to_name[classId.item()] + "Id"] = tracked_objs[inx][-1]
+                            dist_text = f'{distance}'
+                            class_text = f'{class_name["name"]}{tracked_objs[inx][-1]}'
+                            font = cv2.FONT_HERSHEY_PLAIN
+                            
+                            dist_textsize = cv2.getTextSize(dist_text, font, 1.2, 2)[0]
+                            class_textsize = cv2.getTextSize(class_text, font, 1.2, 2)[0]
+
+
+                            # get coords based on boundary
+                            textX = box[0] + box[2] // 2 - dist_textsize[0] // 2
+                            textY = box[1] + box[3] // 2 + dist_textsize[1] // 2
+
+                            class_textX = box[0] + box[2] // 2 - class_textsize[0] // 2
+                            class_textY = box[1] + box[3] // 2 + class_textsize[1] // 2
+
+                            # print(textsize, textX, textY, box)
+                            cv2.putText(screenshot, dist_text, (textX, int(textY - 1.5 * dist_textsize[1])), font, 1.2, (255, 0, 0), 2)
+                            cv2.putText(screenshot, class_text, (class_textX, int(class_textY + 1.5 * class_textsize[1])), font, 1.2, (255, 0, 0), 2)
+                            cv2.rectangle(screenshot, box, color=class_name['color'])
+
+                            # response['objects'][class_name['name']] = { 'area': int(box[2] * box[3]), 'conf_area': int(box[2] * box[3] * confidence) }
+
+                            response[class_name['name']] = int(box[2] * box[3])
+                            response[class_name['name'] + "Id"] = tracked_objs[inx][-1]
+
+                            if class_name['name'] == 'car':
+                                global car_bottom_y
+                                car_bottom_y = box[1] + box[3]
                 except:
                     pass
 
