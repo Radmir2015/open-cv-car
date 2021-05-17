@@ -12,6 +12,11 @@ import win32gui
 
 import json
 
+from tracker import *
+
+# Create tracker object
+tracker = EuclideanDistTracker()
+
 # import cvlib as cv
 # from cvlib.object_detection import draw_bbox
 
@@ -23,7 +28,7 @@ net.setInputMean((127.5, 127.5, 127.5))
 net.setInputSwapRB(True)
 
 borderX = borderY = 5
-startX = 16 
+startX = 240
 startY = 128
 cameraSizeX = cameraSizeY = 256
 
@@ -47,12 +52,16 @@ def get_handle_position(windows_title="open-cv-car"):
             print(hwnd, win_text)
             game_hwnd = hwnd
     print(game_hwnd)
+
+    global handle_position
     
     handle_position = win32gui.GetWindowRect(game_hwnd)
+    print(handle_position)
     return handle_position
 
 def grab_image():
     global handle_position
+
     # Take screenshot
     screenshot = ImageGrab.grab(handle_position)
     return np.array(screenshot)
@@ -86,15 +95,13 @@ class SimpleEcho(WebSocket):
                     screenshot = grab_image()
                     screenshot = crop_image(screenshot)
 
-
                     # screenshot = screenshot[startY:startY + borderY * 2 + cameraSizeY, startX:startX + borderX * 2 + cameraSizeX]
                     # bbox, label, conf = cv.detect_common_objects(screenshot, enable_gpu=True)
                     # yolo_screenshot = draw_bbox(screenshot, bbox, label, conf)
                     
-
                     screenshot = lane_detection(screenshot, response)
 
-                    if ('stop' in response and response['stop'] > 0 or frame_counter % 5 == 0):
+                    if ('stop' in response and response['stop'] > 0 or 'car' in response and response['car'] > 0 or frame_counter % 5 == 0):
                         screenshot = object_detection(screenshot, response)
 
                     send_response(response)
@@ -111,8 +118,6 @@ class SimpleEcho(WebSocket):
                 try:
                     vert_shift, screenshot = lane2.process(screenshot)
                     
-                    # self.sendMessage(str(vert_shift))
-
                     response['vert_shift'] = vert_shift
                 except:
                     pass
@@ -121,53 +126,46 @@ class SimpleEcho(WebSocket):
 
             def object_detection(screenshot, response={}, allow_class_ids=[13, 3]):
                 class_to_name = { 13: 'stop', 3: 'car' }
-                response['objects'] = { 'stop': { 'area': 0, 'conf_area': 0 }, 'car': { 'area': 0, 'conf_area': 0 } }
+
                 response['stop'] = 0
-                # while True:
+                response['car'] = 0
+                response['stopId'] = -1
+                response['carId'] = -1
+
                 try:
                     classes, confidences, boxes = net.detect(screenshot, confThreshold=0.3)
                     classesFlatten = classes.flatten()
-                    # print(classesFlatten, 12 in classesFlatten)
 
                     if any(c in classesFlatten for c in allow_class_ids):
-                        # print("classes", classes)
-                        # response['objects'] = {}
-                        response['objects'] = { 'stop': { 'area': 0, 'conf_area': 0 }, 'car': { 'area': 0, 'conf_area': 0 } }
-                        response['stop'] = 0
-                        
-                        for classId, confidence, box in zip(classesFlatten, confidences.flatten(), boxes):
-                            if classId in allow_class_ids:
-                                print(classId, confidence, box, box[2] * box[3], box[2] * box[3] * confidence)
-                                cv2.rectangle(screenshot, box, color=(0, 255, 0))
+                        allowed_boxes = [boxes[r] for r in range(len(classesFlatten)) if classesFlatten[r] in allow_class_ids]
 
-                                response['objects'][class_to_name[classId.item()]] = { 'area': int(box[2] * box[3]), 'conf_area': int(box[2] * box[3] * confidence) }
-                                response['stop'] = int(box[2] * box[3])
+                        tracked_objs = tracker.update(allowed_boxes)
+                        
+                        for inx, (classId, confidence, box) in enumerate([(cl, co, b) for cl, co, b in zip(classesFlatten, confidences.flatten(), boxes) if cl in allow_class_ids]):
+                            print(classId, confidence, box, box[2] * box[3], box[2] * box[3] * confidence)
+                            cv2.putText(screenshot, class_to_name[classId.item()] + str(tracked_objs[inx][-1]), (box[0], box[1] - 8), cv2.FONT_HERSHEY_PLAIN, 2, (255, 0, 0), 2)
+                            cv2.rectangle(screenshot, box, color=(0, 255, 0))
+
+                            # response['objects'][class_to_name[classId.item()]] = { 'area': int(box[2] * box[3]), 'conf_area': int(box[2] * box[3] * confidence) }
+
+                            response[class_to_name[classId.item()]] = int(box[2] * box[3])
+                            response[class_to_name[classId.item()] + "Id"] = tracked_objs[inx][-1]
                 except:
                     pass
 
                 return screenshot
                 
             thread.start_new_thread(run, ())
-            # thread.start_new_thread(object_detection, ())
         else:
-            # echo message back to client
             print(len(self.data))
             
-            # jpg_original = base64.b64decode(self.data)
             jpg_as_np = np.frombuffer(self.data, dtype=np.uint8)
             img = cv2.imdecode(jpg_as_np, cv2.IMREAD_COLOR)         
-            # print('info', jpg_original, jpg_as_np, img)
 
-            # cv2.imwrite('file.png', img)
-            # cv2.imshow('img', img)
             try: 
                 self.sendMessage(str(lane2.process(img)))
             except:
                 pass
-            # self.sendMessage(self.data)
-            # sleep(5)
-            # cv2.waitKey(1)
-            # cv2.destroyAllWindows()
 
     def handleConnected(self):
         print(self.address, 'connected')

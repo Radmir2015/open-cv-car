@@ -12,7 +12,10 @@ public class JsonResponse
 {
     public float vert_shift;
     public int stop;
-    public DetectionObject objects;
+    public int car;
+    public int stopId;
+    public int carId;
+    // public DetectionObject objects;
 }
 
 public class DetectionObject
@@ -32,13 +35,28 @@ namespace UnityStandardAssets.Vehicles.Car
     [RequireComponent(typeof (CarController))]
     public class CarVisionControl1 : MonoBehaviour
     {
-        private CarController m_Car; // the car controller we want to use
+        public CarController m_Car; // the car controller we want to use
         public Camera Camera;
 
         float h = 0.5f, v = 0f;
 
         WebSocket ws;
-        PID carSpeed = new PID(100, 0, 20);
+        PID carSpeedZero = new PID(0.1f, 0f, 0.02f);
+        PID carSpeedStatic = new PID(0.1f, 0f, 0.02f);
+        PID carSpeedControlledByObject = new PID(0.1f, 0f, 0.02f);
+        float speed = 0f;
+        float zeroPidSpeed = 0f;
+        float forwardPidSpeed = 0f;
+        float objectPidSpeed = 0f;
+
+        int objectArea = 0;
+
+        int lastStopId = -1;
+
+        Animator animator;
+        bool isStopped = false;
+        bool isFollowing = false;
+        bool gonnaStop = false;
 
         void Start () {
 
@@ -47,41 +65,57 @@ namespace UnityStandardAssets.Vehicles.Car
 
         }
 
+        private void PrintSpeed() {
+            Debug.Log(m_Car.CurrentSpeed);
+        }
+
         private void Awake()
         {
             
             ws = WebSocketFactory.CreateInstance("ws://localhost:12345");
 
+            // Connect to the server
+            ws.Connect();
+            // get the car controller
+            m_Car = GetComponent<CarController>();
+            animator = GetComponent<Animator>();
+
+
             ws.OnMessage += (byte[] msg) =>
             {
-                // Debug.Log("WS received message: " + Encoding.UTF8.GetString(msg));
+                Debug.Log("WS received message: " + Encoding.UTF8.GetString(msg));
 
                 var response = JsonUtility.FromJson<JsonResponse>(Encoding.UTF8.GetString(msg));
 
                 h = response.vert_shift;
-                // h = float.Parse(Encoding.UTF8.GetString(msg), CultureInfo.InvariantCulture.NumberFormat);
-                // v = Convert.ToSingle(Math.Max(0, (0.5 - Math.Abs(0.5 - h))) / 5);
                 v = (0.5 - Math.Abs(0.5 - h)) < 0.43f ? 0f : 0.05f;
+                // v = (0.5 - Math.Abs(0.5 - h)) < 0.43f ? 0f : forwardPidSpeed / (1f / 0.5f);
+                
+                if (isFollowing) {
+                    if (isStopped) {
+                        v = zeroPidSpeed;
+                    } else {
+                        if (response.stopId > lastStopId && response.stop > 0 && response.stop < 1000) {
+                            // v = -0.07f * response.stop / 1000;
+                            gonnaStop = true;
 
-                if (response.stop > 0 && response.stop < 1000) {
-                    // v = -0.03f * response.stop / 1000;
-                    // v = (float)carSpeed.calc(m_Car.CurrentSpeed, 0f);
-                } else if (response.stop > 0 && response.stop >= 1000) {
+                            lastStopId = response.stopId;
+                            v = zeroPidSpeed;
 
+                        } else if (response.stop >= 1000) {
+                            // v = 0.05f;
+                        }
+                        if (response.car > 0 && response.car < 3000) {
+                            v = objectPidSpeed;
+                            objectArea = response.car;
+                        }
+                        if (speed < 0) {
+                            v = forwardPidSpeed;
+                        }
+                    }
                 }
                 
-                // Debug.Log(m_Car.CurrentSpeed);
-                // Debug.Log(m_Car.GetComponent<Rigidbody>().velocity.magnitude.ToString());
-                // v = (0.5 - Math.Abs(0.5 - h)) < 0.43f ? -0.05f : 0.05f;
-                // v = Math.Max(0, (0.5 - Math.Abs(0.5 - h))) < 0.43f ? -0.05f : 0.05f;
-                // v = Math.Max(0, (0.5 - Math.Abs(0.5 - h))) < 0.47f ? -0.05f : 0.05f;
-
-                Debug.Log(h.ToString() + " " + (h * 2 - 1) + " " + v);
-
-                // Debug.Log(h.ToString() + " " + (h * 2 - 1) + " " + v + " " + response.objects.stop.area.ToString());
-
-                // 0 = 1
-                // 1 = -1
+                Debug.Log(v + " " + speed + " " + forwardPidSpeed + " " + response.car + " " + response.stopId + " " + isStopped + " " + objectArea + " " + objectPidSpeed);
             };
 
             // Add OnClose event listener
@@ -89,11 +123,6 @@ namespace UnityStandardAssets.Vehicles.Car
             {
                 Debug.Log("WS closed with code: " + code.ToString());
             };
-
-            // Connect to the server
-            ws.Connect();
-            // get the car controller
-            m_Car = GetComponent<CarController>();   
         }
 
         private void OnDestroy() {
@@ -103,7 +132,36 @@ namespace UnityStandardAssets.Vehicles.Car
 
         private void FixedUpdate()
         {
+            isStopped = animator.GetBool("isStopped");
+            isFollowing = animator.GetBool("isFollowing");
+            if (gonnaStop) {
+                SetStopped(animator, true);
+                gonnaStop = false;
+            }
+            speed = m_Car.CurrentSpeed;
+
+            var velocity = m_Car.GetComponent<Rigidbody>().velocity;
+            var localVel = transform.InverseTransformDirection(velocity);
+            
+            if (localVel.z > 0)
+            {
+                // We're moving forward
+            }
+            else
+            {
+                // We're moving backward
+                if (speed > 0) speed = -speed;
+            }
+
+            zeroPidSpeed = (float)carSpeedZero.calc(speed, 0f);
+            forwardPidSpeed = (float)carSpeedStatic.calc(speed, 10f);
+            objectPidSpeed = (float)(carSpeedControlledByObject.calc(objectArea, 800)) / 800;
+
             m_Car.Move(h * 2 - 1, v, v, 0f);
+        }
+
+        public void SetStopped(Animator animator, bool value) {
+            animator.SetBool("isStopped", value);
         }
     
         public void Capture()
