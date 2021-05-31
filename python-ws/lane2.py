@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import warnings
 
+day_canny = (50, 80)
+night_canny = (10, 40)
 
 def make_coordinate(img, line_param):
     slope, intercept = line_param
@@ -64,7 +66,7 @@ def middle_line(lines, height=0.5):
 
 # = cv2.imread('road.jpg')
 #image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-def process(image, roi_height=0.5):
+def process(image, roi_height=0.5, is_night_conditions=True):
     # print(image.shape)
     height = image.shape[0]
     width = image.shape[1]
@@ -76,8 +78,11 @@ def process(image, roi_height=0.5):
         (3*width/4, height*roi_height),
         (width, height)
     ]
-    gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    canny_image = cv2.Canny(gray_image, 100, 120)
+    kernel = np.ones((5, 5), np.float32) / (80 if is_night_conditions else 25)
+    smoothed = cv2.filter2D(image, -1, kernel)
+
+    gray_image = cv2.cvtColor(smoothed, cv2.COLOR_RGB2GRAY)
+    canny_image = cv2.Canny(gray_image, *(night_canny if is_night_conditions else day_canny))
 
     cropped_image = region_of_interest(canny_image,
                              np.array([region_of_interest_vertices], np.int32),)
@@ -96,7 +101,7 @@ def process(image, roi_height=0.5):
             lines = list(map(lambda x: [x], average_slope_intercept(image, lines)))
         except np.RankWarning:
             pass
-        
+    
     middle = middle_line(lines, 0.7)
     # print('middle', middle)
     lines.append(middle[1])
@@ -106,7 +111,8 @@ def process(image, roi_height=0.5):
     # print(vert_shift)
     # return vert_shift 
     image_with_lines = draw_lines(image, lines)
-    return (vert_shift, image_with_lines)
+
+    return (vert_shift, image_with_lines, cropped_image)
 
 if __name__ == '__main__':
     # cap = cv2.VideoCapture('test.mp4')

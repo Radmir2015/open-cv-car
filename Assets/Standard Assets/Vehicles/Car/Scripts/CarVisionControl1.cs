@@ -44,10 +44,14 @@ namespace UnityStandardAssets.Vehicles.Car
         PID carSpeedZero = new PID(0.1f, 0f, 0.02f);
         PID carSpeedStatic = new PID(0.1f, 0f, 0.02f);
         PID carSpeedControlledByObject = new PID(0.1f, 0f, 0.02f);
+
+        PID steeringAngle = new PID(0.1f, 0f, 0.02f);
+
         float speed = 0f;
         float zeroPidSpeed = 0f;
         float forwardPidSpeed = 0f;
         float objectPidSpeed = 0f;
+        float steeringPidAngle = 0.5f;
 
         int objectArea = 0;
 
@@ -57,6 +61,8 @@ namespace UnityStandardAssets.Vehicles.Car
         bool isStopped = false;
         bool isFollowing = false;
         bool gonnaStop = false;
+
+        int isNight = 1;
 
         void Start () {
 
@@ -87,7 +93,10 @@ namespace UnityStandardAssets.Vehicles.Car
 
                 var response = JsonUtility.FromJson<JsonResponse>(Encoding.UTF8.GetString(msg));
 
-                h = response.vert_shift;
+                if (response.vert_shift > -1 && response.vert_shift < 1) {
+                    h = response.vert_shift;
+                }
+
                 v = (0.5 - Math.Abs(0.5 - h)) < 0.43f ? 0f : 0.05f;
                 // v = (0.5 - Math.Abs(0.5 - h)) < 0.43f ? 0f : forwardPidSpeed / (1f / 0.5f);
                 
@@ -115,7 +124,8 @@ namespace UnityStandardAssets.Vehicles.Car
                     }
                 }
                 
-                Debug.Log(v + " " + speed + " " + forwardPidSpeed + " " + response.car + " " + response.stopId + " " + isStopped + " " + objectArea + " " + objectPidSpeed);
+                // Debug.Log(v + " " + speed + " " + forwardPidSpeed + " " + response.car + " " + response.stopId + " " + isStopped + " " + objectArea + " " + objectPidSpeed);
+                Debug.Log(h + " " + steeringPidAngle);
             };
 
             // Add OnClose event listener
@@ -157,7 +167,17 @@ namespace UnityStandardAssets.Vehicles.Car
             forwardPidSpeed = (float)carSpeedStatic.calc(speed, 10f);
             objectPidSpeed = (float)(carSpeedControlledByObject.calc(objectArea, 800)) / 800;
 
+            steeringPidAngle = (float)(steeringAngle.calc(h, 0.5f));
+
             m_Car.Move(h * 2 - 1, v, v, 0f);
+
+        }
+
+        private void Update() {
+            if (Input.GetKeyUp(KeyCode.Q) || Input.GetKeyUp(KeyCode.R)) {
+                isNight++;
+                ws.Send(Encoding.ASCII.GetBytes("is_night " + (isNight % 2).ToString()));
+            }
         }
 
         public void SetStopped(Animator animator, bool value) {

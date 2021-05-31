@@ -39,6 +39,8 @@ focal_length = 50
 
 car_bottom_y = cameraSizeY // 2
 
+is_night = True
+
 def get_handle_position(windows_title="open-cv-car"):
     windows_list = []
     toplist = []
@@ -88,6 +90,11 @@ class SimpleEcho(WebSocket):
             self.sendMessage(json.dumps(response))
 
         print('message', self.data.decode("utf-8"))
+        if self.data.decode("utf-8").startswith('is_night'):
+            global is_night
+            is_night = self.data.decode("utf-8")[-1] == '1'
+            print('is_night', is_night)
+
         if self.data.decode("utf-8") == 'start':
             def run(*args):
                 frame_counter = 0
@@ -105,16 +112,21 @@ class SimpleEcho(WebSocket):
                     # bbox, label, conf = cv.detect_common_objects(screenshot, enable_gpu=True)
                     # yolo_screenshot = draw_bbox(screenshot, bbox, label, conf)
                     
-                    screenshot = lane_detection(screenshot, response)
+                    laned_screenshot, gray_roi = lane_detection(screenshot, response)
 
                     if ('stop' in response and response['stop'] > 0 or 'car' in response and response['car'] > 0 or frame_counter % 5 == 0):
-                        screenshot = object_detection(screenshot, response)
+                        object_screenshot = object_detection(screenshot, response)
+                        
+                        screenshot = cv2.addWeighted(laned_screenshot, 0.5, object_screenshot, 0.5, 0)
 
                     send_response(response)
 
-                    cv2.line(screenshot, (0, car_bottom_y), (cameraSizeX, car_bottom_y), (255, 255, 255), 2)
+
+                    cv2.line(screenshot, (0, car_bottom_y), (cameraSizeX, car_bottom_y), (255, 255, 255), 1)
  
                     cv2.imshow("Screen", screenshot)
+                    if len(gray_roi) > 0:
+                        cv2.imshow("Gray ROI", gray_roi)
 
                     key = cv2.waitKey(1)
                     if key == 27:
@@ -123,14 +135,17 @@ class SimpleEcho(WebSocket):
                 cv2.destroyAllWindows()
             
             def lane_detection(screenshot, response):
+                gray_roi = []
+
                 try:
-                    vert_shift, screenshot = lane2.process(screenshot, roi_height=(car_bottom_y / cameraSizeY))
+                    global is_night
+                    vert_shift, screenshot, gray_roi = lane2.process(screenshot, roi_height=(car_bottom_y / cameraSizeY), is_night_conditions=is_night)
                     
                     response['vert_shift'] = vert_shift
                 except:
                     pass
 
-                return screenshot
+                return screenshot, gray_roi
 
             def object_detection(screenshot, response={}, allow_class_ids=[13, 3]):
                 class_to_name = {
